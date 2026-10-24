@@ -71,6 +71,8 @@ int choose_direction(const Mapping& mapping, bool avoid_enemy = true) {
     dist[start] = 0;
     que.push(start); // 現在地は壁扱いでも出発できる。
     int frontier_direction = -1;
+    int best_unknown = 0;
+    int best_distance = 0;
     int fallback_direction = -1;
 
     while (!que.empty()) {
@@ -80,6 +82,27 @@ int choose_direction(const Mapping& mapping, bool avoid_enemy = true) {
         // BFSは近い順。最初に見つけたアイテムを目指す。
         if (current != start && mapping.at(x, y) == ITEM) {
             return first_direction[current];
+        }
+        // アイテムが見つからない場合に備え、探索先も比較する。
+        // 評価 = 到着時に見える未知マス数 / (移動距離 + 1)。
+        // 現在地は既に観測済みなので候補にしない。
+        if (current != start) {
+            int unknown = 0;
+            for (int oy = -1; oy <= 1; ++oy) {
+                for (int ox = -1; ox <= 1; ++ox) {
+                    if (mapping.at(x + ox, y + oy) == UNKNOWN) ++unknown;
+                }
+            }
+            int distance = dist[current];
+            // 分数は交差積で比較。同点なら近い候補を優先する。
+            if (unknown > 0 && (frontier_direction == -1 ||
+                1LL * unknown * (best_distance + 1) > 1LL * best_unknown * (distance + 1) ||
+                (1LL * unknown * (best_distance + 1) == 1LL * best_unknown * (distance + 1) &&
+                 distance < best_distance))) {
+                frontier_direction = first_direction[current];
+                best_unknown = unknown;
+                best_distance = distance;
+            }
         }
         for (int d = 0; d < 4; ++d) {
             int nx = x + dx[d], ny = y + dy[d];
@@ -94,10 +117,7 @@ int choose_direction(const Mapping& mapping, bool avoid_enemy = true) {
                 }
                 if (danger) continue;
             }
-            // 未知のマスへは直接進まず、その隣の観測済みマスを目指す。
-            if (cell == UNKNOWN && current != start && frontier_direction == -1) {
-                frontier_direction = first_direction[current];
-            }
+            // 未知のマスへ直接は進まず、観測済みの床・アイテムだけ探索。
             if (dist.count(next)) continue;
             if (cell != EMPTY && cell != ITEM) continue;
             dist[next] = dist[current] + 1;

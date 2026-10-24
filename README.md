@@ -23,3 +23,5 @@ python3 tools/watch_logs.py
 プログラムIDと名前の対応は `tools/log_names.json` で設定します。ボードは対応表、または `mapjson/` と初期盤面の一致から名前を決めます。
 未知のIDは `program-ID` / `board-ID` として保存します。新しいsolverを登録したら対応表にも追加してください。
 起動時に存在する未命名ログも処理します。一度だけまとめて処理する場合は `python3 tools/watch_logs.py --once`。
+
+solverの変更内容と対戦ログ番号の対応は [変更メモ](logs/solver_notes.md) に記録します。

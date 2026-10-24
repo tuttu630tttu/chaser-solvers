@@ -1,7 +1,8 @@
 {
   "programs": {
     "31": "2025solver",
-    "32": "sample"
+    "32": "sample",
+    "37": "2026solver"
   },
   "boards": {
     "411": "u16tokyo1"

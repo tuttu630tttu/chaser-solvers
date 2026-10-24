@@ -5,9 +5,17 @@
 #include<algorithm>
 #include<string>
 using namespace std;
-// 2026年版の出発点。移動判断は2025年版を残し、マッピングを追加。
+// 記憶した地図をBFSで探索し、アイテム・未探索領域へ向かう。
 #include <map>
 #include <utility>
+#include <queue>
+constexpr char UNKNOWN = '?';
+constexpr char EMPTY   = '0';
+constexpr char ENEMY   = '1';
+constexpr char WALL    = '2';
+constexpr char ITEM    = '3';
+static const int dx[] = {0, -1, 1, 0};
+static const int dy[] = {-1, 0, 0, 1};
 
 struct Mapping {
     // 出発点を(0, 0)とする相対座標。xは右、yは下が正。
@@ -18,168 +26,160 @@ struct Mapping {
 
     char at(int px, int py) const {
         auto it = cells.find({px, py});
-        return it == cells.end() ? '?' : it->second;
+        return it == cells.end() ? UNKNOWN : it->second;
     }
 
     void observe(const std::string& neighbor) {
         // 敵は移動するため、前ターンの位置を残さない。
         // 敵の足元の地形は観測できていないので未観測に戻す。
         for (auto it = cells.begin(); it != cells.end();) {
-            if (it->second == '1') it = cells.erase(it);
+            if (it->second == ENEMY) it = cells.erase(it);
             else ++it;
         }
         for (int i = 0; i < 9; ++i) {
             cells[{x + i % 3 - 1, y + i / 3 - 1}] = neighbor[i];
         }
-        cells[{x, y}] = '0';
+        cells[{x, y}] = EMPTY;
+    }
+
+    void observe_search(int direction, const string& result) {
+        // searchは指定方向の距離1〜9の順。現在地は変わらない。
+        for (int i = 0; i < 9; ++i) {
+            cells[{x + dx[direction] * (i + 1),
+                   y + dy[direction] * (i + 1)}] = result[i];
+        }
     }
 
     void moved(int direction) {
-        // 方向は既存solverと同じく 上・左・右・下。
-        static const int dx[] = {0, -1, 1, 0};
-        static const int dy[] = {-1, 0, 0, 1};
-        x += dx[direction];
-        y += dy[direction];
-        // 歩いた先のアイテムは取得済み。
-        cells[{x, y}] = '0';
+        int nx = x + dx[direction], ny = y + dy[direction];
+        // アイテム取得時は「移動元」が壁になる。移動先は取得後の床。
+        if (at(nx, ny) == ITEM) cells[{x, y}] = WALL;
+        x = nx;
+        y = ny;
+        cells[{x, y}] = EMPTY;
     }
 };
 
-int main() {
-srand(time(nullptr));
-Mapping mapping;
-int grid = -1; // 記憶
-int count = 0; // 自ターンのカウント
-cout << "CHaser猫のちぇいにゃんだにゃ〜ん☆" << endl;
-cout << "対戦よろしくだにゃん☆" << endl;
-while (true) {
-count++;
-cout << " " << count << "ターン目にゃん" <<endl;
-string neighbor = get_ready();
-// EOFや終了通知を9マスとして読み込まない。
-if (neighbor.size() != 9 || neighbor.find_first_not_of("0123") != string::npos) break;
-mapping.observe(neighbor);
-cout << "map: position=(" << mapping.x << "," << mapping.y
-     << "), known=" << mapping.cells.size() << endl;
-cout << "周囲の確認にゃ: " << neighbor << endl;
-// 各方向マスの状態
-int up    = neighbor[1] - '0';
-int left  = neighbor[3] - '0';
-int right = neighbor[5] - '0';
-int down  = neighbor[7] - '0';
-string naname = "0268";
-bool acted = false;
+// 到達済みかどうかはdist.count()で判定する。
+// 各マスへ向かう「最初の方向」も記録し、経路の逆追跡を省く。
+int choose_direction(const Mapping& mapping, bool avoid_enemy = true) {
+    using Position = pair<int, int>;
+    queue<Position> que;
+    map<Position, int> dist;
+    map<Position, int> first_direction;
+    Position start = {mapping.x, mapping.y};
+    dist[start] = 0;
+    que.push(start); // 現在地は壁扱いでも出発できる。
+    int frontier_direction = -1;
+    int fallback_direction = -1;
 
-// 各移動方向の粗評価
-    // 4アイテム, 3なにもない, 0壁
-    int safe[4];
-    safe[0] = (up == 3) ? 4 : (up == 0 ? 3 : 0);
-    safe[1] = (left == 3) ? 4 : (left == 0 ? 3 : 0);
-    safe[2] = (right == 3) ? 4 : (right == 0 ? 3 : 0);
-    safe[3] = (down == 3) ? 4 : (down == 0 ? 3 : 0);
-    //攻撃
-    if (up == 1) {
-        cout << "上に敵発見にゃ!putするにゃん!" << endl; put_up(); acted = true;
-    } else if (left == 1) {
-        cout << "左に敵確認にゃ!いっくぞ〜" << endl; put_left(); acted = true;
-    } else if (right == 1) {
-        cout << "ぼくの右側に立つにゃんて〜" << endl; put_right(); acted = true;
-    } else if (down == 1) {
-        cout << "下側に標的にゃ！くらえにゃ〜" << endl; put_down(); acted = true;
-    }
-    // 細かい評価フェーズ
-    // 4(+1)アイテム, 3(+1)なにもない, 3はさまれアイテム, 2前回方向, 1斜め敵, 0壁, 斜めアイテムは加点
-    // 前回マスを減点
-    if(!acted && !(grid == -1)){
-        safe[grid] = 2;
-    }
-    // 斜めアイテムは加点
-    if(!acted){
-        for (char x : naname) {
-            int idx = x - '0';
-            if (neighbor[idx] == '3') {  // アイテム3
-            cout << idx <<"におやつの香りがするにゃん…" << endl;
-                switch (idx) {
-                    case 0: // 左上
-                        if (safe[0] > 0) safe[0]++; // 上
-                        if (safe[1] > 0) safe[1]++; // 左
-                        break;
-                    case 2: // 右上
-                        if (safe[0] > 0) safe[0]++; // 上
-                        if (safe[2] > 0) safe[2]++; // 右
-                        break;
-                    case 6: // 左下
-                        if (safe[1] > 0) safe[1]++; // 左
-                        if (safe[3] > 0) safe[3]++; // 下
-                        break;
-                    case 8: // 右下
-                        if (safe[2] > 0) safe[2]++; // 右
-                        if (safe[3] > 0) safe[3]++; // 下
-                        break;
+    while (!que.empty()) {
+        auto [x, y] = que.front();
+        que.pop();
+        Position current = {x, y};
+        // BFSは近い順。最初に見つけたアイテムを目指す。
+        if (current != start && mapping.at(x, y) == ITEM) {
+            return first_direction[current];
+        }
+        for (int d = 0; d < 4; ++d) {
+            int nx = x + dx[d], ny = y + dy[d];
+            Position next = {nx, ny};
+            char cell = mapping.at(nx, ny);
+            // 斜め敵は減点：今回の一歩で敵の隣へ出る方向を後回しにする。
+            // 遠い未来の経路には、現在の敵位置を固定して適用しない。
+            if (avoid_enemy && current == start) {
+                bool danger = false;
+                for (int e = 0; e < 4; ++e) {
+                    if (mapping.at(nx + dx[e], ny + dy[e]) == ENEMY) danger = true;
                 }
+                if (danger) continue;
             }
-        }
-    }
-    // はさまれアイテムは減点
-    if(!acted){
-        if(up == 3 && neighbor[0] == '2' && neighbor[2] == '2') safe[0] = 3;
-        if(left == 3 && neighbor[0] == '2' && neighbor[6] == '2') safe[1] = 3;
-        if(right == 3 && neighbor[2] == '2' && neighbor[8] == '2') safe[2] = 3;
-        if(down == 3 && neighbor[6] == '2' && neighbor[8] == '2') safe[3] = 3;
-    }
-    // 斜め敵は減点
-    if(!acted){
-        for (char x : naname) {
-            int idx = x - '0';
-            if (neighbor[idx] == '1') {  // 敵1
-                cout << "斜めに敵, 警戒するにゃん!" << endl;
-                switch (idx) {
-                    case 0: // 左上
-                        safe[0] = 1; // 上
-                        safe[1] = 1; // 左
-                        break;
-                    case 2: // 右上
-                        safe[0] = 1; // 上
-                        safe[2] = 1; // 右
-                        break;
-                    case 6: // 左下
-                        safe[1] = 1; // 左
-                        safe[3] = 1; // 下
-                        break;
-                    case 8: // 右下
-                        safe[2] = 1; // 右
-                        safe[3] = 1; // 下
-                        break;
-                }
+            // 未知のマスへは直接進まず、その隣の観測済みマスを目指す。
+            if (cell == UNKNOWN && current != start && frontier_direction == -1) {
+                frontier_direction = first_direction[current];
             }
+            if (dist.count(next)) continue;
+            if (cell != EMPTY && cell != ITEM) continue;
+            dist[next] = dist[current] + 1;
+            first_direction[next] = current == start ? d : first_direction[current];
+            if (current == start && fallback_direction == -1) fallback_direction = d;
+            que.push(next);
         }
     }
-    // 移動
-    if (!acted) {
-        // ランダム順で探索
-        struct info {int di; int score; };
-        info safe2[4] = {{0, safe[0]},{1, safe[1]},{2, safe[2]},{3, safe[3]}};
-        for (int i = 3; i > 0; i--) {
-            int j = rand() % (i + 1);
-            swap(safe2[i], safe2[j]);
-        }
-        // マスのスコア順にソート
-        sort(safe2,safe2 + 4, [](auto&a, auto&b){return a.score > b.score; });
-        int dd = safe2[0].di;
-        switch(dd){ // 移動
-            case 0: cout << "上に行くにゃん" << endl; walk_up(); mapping.moved(0); break;
-            case 1: cout << "左に進むにゃんよ" << endl; walk_left(); mapping.moved(1); break;
-            case 2: cout << "右に移動するにゃん" << endl; walk_right(); mapping.moved(2); break;
-            case 3: cout << "下に降りるにゃん" << endl; walk_down(); mapping.moved(3); break;
-        }
-        switch(dd){ // 記憶
-            case 0: grid = 3; break;
-            case 1: grid = 2; break;
-            case 2: grid = 1; break;
-            case 3: grid = 0; break;
-        }
-    }
+    if (frontier_direction != -1) return frontier_direction;
+    return fallback_direction; // 既知のアイテムも未探索領域もない場合。
 }
-    return 0;
 
+// 待機中にも地図を広げるため、直線9マスの未知が最も多い方向を選ぶ。
+int choose_search_direction(const Mapping& mapping) {
+    int best = 0, best_unknown = -1;
+    for (int d = 0; d < 4; ++d) {
+        int unknown = 0;
+        for (int i = 1; i <= 9; ++i) {
+            if (mapping.at(mapping.x + dx[d] * i, mapping.y + dy[d] * i) == UNKNOWN) {
+                ++unknown;
+            }
+        }
+        if (unknown > best_unknown) {
+            best = d;
+            best_unknown = unknown;
+        }
+    }
+    return best;
+}
+
+int main() {
+    Mapping mapping;
+    int count = 0;
+    void (*walks[])() = {walk_up, walk_left, walk_right, walk_down};
+    string (*searches[])() = {search_up, search_left, search_right, search_down};
+    void (*puts[])() = {put_up, put_left, put_right, put_down};
+    cout << "CHaser猫のちぇいにゃんだにゃ〜ん☆" << endl;
+    cout << "対戦よろしくだにゃん☆" << endl;
+    while (true) {
+        string neighbor = get_ready();
+        // EOFや終了通知を9マスとして読み込まない。
+        if (neighbor.size() != 9 || any_of(neighbor.begin(), neighbor.end(), [](char cell) {
+            return cell != EMPTY && cell != ENEMY && cell != WALL && cell != ITEM;
+        })) break;
+        mapping.observe(neighbor);
+        cout << ++count << "ターン目 position=(" << mapping.x << "," << mapping.y
+             << "), known=" << mapping.cells.size() << endl;
+
+        bool acted = false;
+        for (int d = 0; d < 4; ++d) {
+            if (mapping.at(mapping.x + dx[d], mapping.y + dy[d]) == ENEMY) {
+                puts[d]();
+                mapping.cells[{mapping.x + dx[d], mapping.y + dy[d]}] = WALL;
+                acted = true;
+                break;
+            }
+        }
+        if (acted) continue;
+
+        int direction = choose_direction(mapping);
+        if (direction == -1) {
+            // 斜め敵に隣接する移動しかないなら、動かずsearchで1ターン使う。
+            if (choose_direction(mapping, false) != -1) {
+                int search_direction = choose_search_direction(mapping);
+                cout << "危険な移動を避けてsearch: direction=" << search_direction << endl;
+                // ヘッダのsearch関数が探索結果を1行読み取る。
+                string result = searches[search_direction]();
+                if (result.size() != 9 || any_of(result.begin(), result.end(), [](char cell) {
+                    return cell != EMPTY && cell != ENEMY && cell != WALL && cell != ITEM;
+                })) break;
+                mapping.observe_search(search_direction, result);
+                continue; // 次ターンの周囲情報で攻撃・移動を判断し直す。
+            }
+        }
+        if (direction == -1) {
+            // 全方向が壁なら移動できない。通常はゲーム側で終了する。
+            cout << "移動できるマスがないにゃん" << endl;
+            break;
+        }
+        cout << "BFS: direction=" << direction << endl;
+        walks[direction]();
+        mapping.moved(direction);
+    }
+    return 0;
 }

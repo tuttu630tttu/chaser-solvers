@@ -1,0 +1,9 @@
+{
+  "programs": {
+    "31": "2025solver",
+    "32": "sample"
+  },
+  "boards": {
+    "411": "u16tokyo1"
+  }
+}

@@ -60,9 +60,27 @@ struct Mapping {
     }
 };
 
+// デバッグ用。行動選択には使わず、決定した目的地を記録する。
+struct DecisionLog {
+    const char* reason = "NO_MOVE";
+    int target_x = 0, target_y = 0;
+    int distance = 0;
+    int unknown = 0;
+};
+
+int unknown_around(const Mapping& mapping, int x, int y) {
+    int count = 0;
+    for (int oy = -1; oy <= 1; ++oy) {
+        for (int ox = -1; ox <= 1; ++ox) {
+            if (mapping.at(x + ox, y + oy) == UNKNOWN) ++count;
+        }
+    }
+    return count;
+}
+
 // 到達済みかどうかはdist.count()で判定する。
 // 各マスへ向かう「最初の方向」も記録し、経路の逆追跡を省く。
-int choose_direction(const Mapping& mapping, bool avoid_enemy = true) {
+int choose_direction(const Mapping& mapping, bool avoid_enemy = true, DecisionLog* log = nullptr) {
     using Position = pair<int, int>;
     queue<Position> que;
     map<Position, int> dist;
@@ -74,6 +92,12 @@ int choose_direction(const Mapping& mapping, bool avoid_enemy = true) {
     int best_unknown = 0;
     int best_distance = 0;
     int fallback_direction = -1;
+    Position frontier_target = start;
+    auto chosen = [&](int direction, const char* reason, Position target, int distance) {
+        if (log) *log = {reason, target.first, target.second, distance,
+                        unknown_around(mapping, target.first, target.second)};
+        return direction;
+    };
 
     while (!que.empty()) {
         auto [x, y] = que.front();
@@ -81,18 +105,13 @@ int choose_direction(const Mapping& mapping, bool avoid_enemy = true) {
         Position current = {x, y};
         // BFSは近い順。最初に見つけたアイテムを目指す。
         if (current != start && mapping.at(x, y) == ITEM) {
-            return first_direction[current];
+            return chosen(first_direction[current], "ITEM", current, dist[current]);
         }
         // アイテムが見つからない場合に備え、探索先も比較する。
         // 評価 = 到着時に見える未知マス数 / (移動距離 + 1)。
         // 現在地は既に観測済みなので候補にしない。
         if (current != start) {
-            int unknown = 0;
-            for (int oy = -1; oy <= 1; ++oy) {
-                for (int ox = -1; ox <= 1; ++ox) {
-                    if (mapping.at(x + ox, y + oy) == UNKNOWN) ++unknown;
-                }
-            }
+            int unknown = unknown_around(mapping, x, y);
             int distance = dist[current];
             // 分数は交差積で比較。同点なら近い候補を優先する。
             if (unknown > 0 && (frontier_direction == -1 ||
@@ -100,6 +119,7 @@ int choose_direction(const Mapping& mapping, bool avoid_enemy = true) {
                 (1LL * unknown * (best_distance + 1) == 1LL * best_unknown * (distance + 1) &&
                  distance < best_distance))) {
                 frontier_direction = first_direction[current];
+                frontier_target = current;
                 best_unknown = unknown;
                 best_distance = distance;
             }
@@ -126,8 +146,15 @@ int choose_direction(const Mapping& mapping, bool avoid_enemy = true) {
             que.push(next);
         }
     }
-    if (frontier_direction != -1) return frontier_direction;
-    return fallback_direction; // 既知のアイテムも未探索領域もない場合。
+    if (frontier_direction != -1) {
+        return chosen(frontier_direction, "EXPLORE", frontier_target, best_distance);
+    }
+    if (fallback_direction != -1) {
+        return chosen(fallback_direction, "FALLBACK",
+                      {mapping.x + dx[fallback_direction], mapping.y + dy[fallback_direction]}, 1);
+    }
+    return chosen(-1, "NO_MOVE", start, 0);
+
 }
 
 // 待機中にも地図を広げるため、直線9マスの未知が最も多い方向を選ぶ。
@@ -154,6 +181,7 @@ int main() {
     void (*walks[])() = {walk_up, walk_left, walk_right, walk_down};
     string (*searches[])() = {search_up, search_left, search_right, search_down};
     void (*puts[])() = {put_up, put_left, put_right, put_down};
+    cout << "solver-build: exploration-debug-v1" << endl;
     cout << "CHaser猫のちぇいにゃんだにゃ〜ん☆" << endl;
     cout << "対戦よろしくだにゃん☆" << endl;
     while (true) {
@@ -165,10 +193,13 @@ int main() {
         mapping.observe(neighbor);
         cout << ++count << "ターン目 position=(" << mapping.x << "," << mapping.y
              << "), known=" << mapping.cells.size() << endl;
+        cout << "neighbor=" << neighbor << endl;
 
         bool acted = false;
         for (int d = 0; d < 4; ++d) {
             if (mapping.at(mapping.x + dx[d], mapping.y + dy[d]) == ENEMY) {
+                cout << "decision=PUT target=(" << mapping.x + dx[d] << ","
+                     << mapping.y + dy[d] << ") distance=1 direction=" << d << endl;
                 puts[d]();
                 mapping.cells[{mapping.x + dx[d], mapping.y + dy[d]}] = WALL;
                 acted = true;
@@ -177,14 +208,23 @@ int main() {
         }
         if (acted) continue;
 
-        int direction = choose_direction(mapping);
+        DecisionLog decision;
+        int direction = choose_direction(mapping, true, &decision);
         if (direction == -1) {
             // 斜め敵に隣接する移動しかないなら、動かずsearchで1ターン使う。
             if (choose_direction(mapping, false) != -1) {
                 int search_direction = choose_search_direction(mapping);
+                int unknown = 0;
+                for (int i = 1; i <= 9; ++i) {
+                    if (mapping.at(mapping.x + dx[search_direction] * i,
+                                   mapping.y + dy[search_direction] * i) == UNKNOWN) ++unknown;
+                }
+                cout << "decision=SEARCH_WAIT target=none distance=0 direction="
+                     << search_direction << " unknown_line=" << unknown << endl;
                 cout << "危険な移動を避けてsearch: direction=" << search_direction << endl;
                 // ヘッダのsearch関数が探索結果を1行読み取る。
                 string result = searches[search_direction]();
+                cout << "search_result=" << result << endl;
                 if (result.size() != 9 || any_of(result.begin(), result.end(), [](char cell) {
                     return cell != EMPTY && cell != ENEMY && cell != WALL && cell != ITEM;
                 })) break;
@@ -194,9 +234,13 @@ int main() {
         }
         if (direction == -1) {
             // 全方向が壁なら移動できない。通常はゲーム側で終了する。
+            cout << "decision=NO_MOVE target=none distance=0" << endl;
             cout << "移動できるマスがないにゃん" << endl;
             break;
         }
+        cout << "decision=" << decision.reason << " target=(" << decision.target_x
+             << "," << decision.target_y << ") distance=" << decision.distance
+             << " unknown=" << decision.unknown << " direction=" << direction << endl;
         cout << "BFS: direction=" << direction << endl;
         walks[direction]();
         mapping.moved(direction);

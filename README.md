@@ -28,7 +28,7 @@ solverの変更内容と対戦ログ番号の対応は [変更メモ](logs/solve
 
 ## solverのデバッグ出力
 
-`2026_solver.cpp` は起動時に `solver-build: exploration-debug-v1` を表示します。
+`2026_solver.cpp` は起動時に `solver-build: enemy-memory-v1` を表示します。
 Webへ貼り替えた後はこの行で版を確認できます。
 
 例: `decision=EXPLORE target=(-3,2) distance=5 unknown=4 direction=1`
@@ -37,9 +37,11 @@ Webへ貼り替えた後はこの行で版を確認できます。
 - `EXPLORE`: 未知の観測効率で選んだ目的地へ移動
 - `FALLBACK`: アイテムも未知の観測候補もない場合の移動
 - `PUT`: 隣接敵への攻撃
-- `SEARCH_WAIT`: 危険な接近を避けてsearchで待機
+- `SEARCH_WAIT`: 危険な接近・アイテム取得による閉じ込めを避けてsearchで待機
 - `NO_MOVE`: 歩けるマスがなく終了
 
 目的地と現在位置は出発点基準の相対座標、距離は現在地からのBFS歩数です。
 方向番号は0=上、1=左、2=右、3=下。`unknown`は目的地周囲3×3の未知マス数、
 `unknown_line`はsearch対象の直線9マスの未知数です。search待機には移動目的地はありません。
+
+敵を見失ってから3ターンは候補位置を保持します。`enemy_memory: age=1 candidates=4` のように警戒期間と候補数を出力します（age=-1は警戒なし、0は敵を観測したターン）。
